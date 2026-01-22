@@ -44,7 +44,7 @@ st.markdown("""
     .badge-orange { background-color: #fffaf0; color: #c05621; border: 1px solid #feebc8; }
     .badge-green { background-color: #f0fff4; color: #276749; border: 1px solid #c6f6d5; }
     
-    .subj-content { font-size: 16px; color: #1a202c; font-weight: 500; line-height: 1.6; word-break: keep-all; text-align: center; }
+    .subj-content { font-size: 16px; color: #1a202c; font-weight: 500; text-align: center; }
     
     .inquiry-box {
         background-color: #ffffff; border: 1px solid #9ae6b4; border-left: 5px solid #48bb78;
@@ -69,57 +69,42 @@ def is_related(target_dept, source_str):
     return target in source or source in target
 
 # --------------------------------------------------------------------------
-# 3. 데이터 로드 (★ 파일 찾기 도우미 추가 ★)
+# 3. 데이터 로드 (★ 에러 방지 및 자동 인식 강화 ★)
 # --------------------------------------------------------------------------
 @st.cache_data
 def load_data():
     db_file = "학과카드_DB.xlsx"
     inq_file = "탐구주제목록.xlsx"
 
-    # [1] 학과 데이터 (Sheet1)
+    # [1] 학과 데이터
+    df_major = None
     if os.path.exists(db_file):
         try:
-            # 헤더 자동 찾기 로직
             df_major = pd.read_excel(db_file, sheet_name=0)
+            # 헤더 찾기
             for i in range(10):
                 temp_cols = [str(c) for c in df_major.columns]
                 if any("학과" in c for c in temp_cols) or any("계열" in c for c in temp_cols):
                     break
                 df_major = pd.read_excel(db_file, sheet_name=0, header=i+1)
-            
-            # 컬럼명 공백 제거
             df_major.columns = df_major.columns.astype(str).str.replace(" ", "").str.strip()
             
-            # [2] 도서 데이터 (Sheet2)
             try: 
                 df_books = pd.read_excel(db_file, sheet_name=1)
                 df_books.fillna('', inplace=True)
             except: df_books = pd.DataFrame()
-        except Exception as e:
-            st.error(f"파일 읽기 오류: {e}")
-            return None, None, None
-    else:
-        # ★ 여기가 파일 찾기 도우미입니다 ★
-        st.error(f"❌ '{db_file}' 파일을 찾을 수 없습니다.")
-        st.warning(f"📂 현재 폴더 위치: {os.getcwd()}")
-        
-        # 현재 폴더의 파일 목록을 보여줍니다.
-        files = os.listdir()
-        st.write("📂 **현재 폴더에 있는 파일 목록:**")
-        st.code("\n".join(files))
-        
-        st.info("💡 팁: 위 목록에 있는 파일 이름과 코드에 적힌 이름('학과카드_DB.xlsx')이 정확히 같은지 확인해보세요.")
-        return None, None, None
+        except: return None, None, None
+    else: return None, None, None
 
-    # [3] 탐구 주제 데이터
+    # [2] 탐구 주제 데이터
     df_inq = pd.DataFrame()
     if os.path.exists(inq_file):
         try:
             df_inq = pd.read_excel(inq_file)
             df_inq.fillna('', inplace=True)
+            # ★ 컬럼명 공백 제거 (매우 중요) ★
+            df_inq.columns = df_inq.columns.astype(str).str.replace(" ", "").str.strip()
         except: pass
-    else:
-        st.warning(f"⚠️ '{inq_file}' 파일이 없습니다.")
 
     return df_major, df_books, df_inq
 
@@ -129,17 +114,30 @@ df_major, df_books, df_inq = load_data()
 # 4. 화면 출력
 # --------------------------------------------------------------------------
 st.sidebar.title("🔍 검색 메뉴")
+
 if df_major is not None:
-    # 컬럼명 찾기
+    # 1. 학과 컬럼 매핑
     dept_col = next((c for c in df_major.columns if "학과" in c), None)
     cat_col = next((c for c in df_major.columns if "계열" in c), "계열")
-    
     if not dept_col:
-        st.error("🚨 '학과' 관련 제목을 찾지 못했습니다.")
-        st.write("현재 인식된 제목들:", df_major.columns.tolist())
+        st.error("🚨 학과 데이터에서 '학과' 제목을 찾지 못했습니다.")
         st.stop()
-        
     if cat_col not in df_major.columns: df_major[cat_col] = '전체'
+
+    # 2. 탐구 주제 컬럼 자동 찾기 (★ 여기가 핵심입니다 ★)
+    inq_dept_col = None
+    inq_topic_col = None
+    inq_subj_col = None
+
+    if not df_inq.empty:
+        # 학과 컬럼: '학과', '전공'
+        inq_dept_col = next((c for c in df_inq.columns if "학과" in c or "전공" in c), None)
+        
+        # 주제 컬럼: '주제', '탐구', '내용', '명' 등
+        inq_topic_col = next((c for c in df_inq.columns if any(k in c for k in ["주제", "탐구", "내용", "명"])), None)
+        
+        # 교과 컬럼: '교과', '과목', '관련', '분야' 등
+        inq_subj_col = next((c for c in df_inq.columns if any(k in c for k in ["교과", "과목", "관련", "분야"])), None)
 
     # 필터
     cat_list = ["전체"] + sorted(df_major[cat_col].astype(str).unique().tolist())
@@ -159,48 +157,59 @@ if df_major is not None:
         
         st.markdown(f"## 🏫 {dept_name} <span style='font-size:0.6em; color:#4a5568;'>({cat_name})</span>", unsafe_allow_html=True)
         
-        # [1] 학과 설명
+        # 학과 설명
         desc_col = next((c for c in df_major.columns if "설명" in c or "소개" in c), None)
         desc = row[desc_col] if desc_col else (row.iloc[2] if len(row) > 2 else "-")
         st.markdown(f'<div class="desc-box"><b>💡 학과 소개</b><br>{desc}</div>', unsafe_allow_html=True)
         
-        # [2] 선택 과목
+        # 선택 과목
         st.markdown('<div class="section-header">📚 권장 선택 과목</div>', unsafe_allow_html=True)
-        
         def find_val(r, k):
             for col in df_major.columns:
-                if k in col and ("선택" in col or "과목" in col or "교과" in col): return r[col]
+                if k in col and ("선택" in col or "과목" in col): return r[col]
             return "-"
-
-        gen = find_val(row, "일반")
-        car = find_val(row, "진로")
-        fus = find_val(row, "융합")
-
         c1, c2, c3 = st.columns(3)
-        with c1: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-blue">📘 일반 선택</span><div class="subj-content">{gen}</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-orange">📙 진로 선택</span><div class="subj-content">{car}</div></div>', unsafe_allow_html=True)
-        with c3: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-green">📗 융합 선택</span><div class="subj-content">{fus}</div></div>', unsafe_allow_html=True)
+        with c1: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-blue">📘 일반 선택</span><div class="subj-content">{find_val(row, "일반")}</div></div>', unsafe_allow_html=True)
+        with c2: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-orange">📙 진로 선택</span><div class="subj-content">{find_val(row, "진로")}</div></div>', unsafe_allow_html=True)
+        with c3: st.markdown(f'<div class="subject-card"><span class="subj-badge badge-green">📗 융합 선택</span><div class="subj-content">{find_val(row, "융합")}</div></div>', unsafe_allow_html=True)
 
-        # [3] 추천 도서
+        # 도서
         st.markdown('<div class="section-header">📖 전공 추천 도서</div>', unsafe_allow_html=True)
         if not df_books.empty:
-            major_col_idx = 1
+            mj_idx = 1
             for i, c in enumerate(df_books.columns):
-                if '전공' in str(c) or '학과' in str(c):
-                    major_col_idx = i; break
-            
-            matches = df_books[df_books.iloc[:, major_col_idx].apply(lambda x: is_related(dept_name, x))]
-            if not matches.empty:
-                st.dataframe(matches, hide_index=True, use_container_width=True)
+                if '전공' in str(c) or '학과' in str(c): mj_idx = i; break
+            matches = df_books[df_books.iloc[:, mj_idx].apply(lambda x: is_related(dept_name, x))]
+            if not matches.empty: st.dataframe(matches, hide_index=True, use_container_width=True)
             else: st.info("관련 도서 정보가 없습니다.")
 
-        # [4] 탐구 주제
+        # 탐구 주제 (★ 에러 해결 핵심 부분 ★)
         st.markdown('<div class="section-header">🔬 추천 탐구 주제</div>', unsafe_allow_html=True)
-        if not df_inq.empty:
-            inq_matches = df_inq[df_inq['학과'].apply(lambda x: is_related(dept_name, x))]
+        # 주제 컬럼과 학과 컬럼이 확실히 발견되었을 때만 실행
+        if not df_inq.empty and inq_dept_col and inq_topic_col:
+            inq_matches = df_inq[df_inq[inq_dept_col].apply(lambda x: is_related(dept_name, x))]
             if not inq_matches.empty:
                 for _, q in inq_matches.iterrows():
-                    st.markdown(f'<div class="inquiry-box"><span class="subject-tag">{q["관련교과"]}</span> {q["주제명"]}</div>', unsafe_allow_html=True)
-            else: st.info("탐구 주제 정보가 없습니다.")
+                    # 1. 교과명이 있는지 확인 (없으면 '전공'으로 표시)
+                    # 여기를 q['관련교과']라고 하드코딩해서 에러가 났던 겁니다. 
+                    # 아래처럼 변수(inq_subj_col)를 사용하면 에러가 안 납니다.
+                    subj_text = q[inq_subj_col] if inq_subj_col else "전공"
+                    
+                    # 2. 주제명 가져오기
+                    topic_text = q[inq_topic_col]
+                    
+                    st.markdown(f'<div class="inquiry-box"><span class="subject-tag">{subj_text}</span> {topic_text}</div>', unsafe_allow_html=True)
+            else: st.info(f"'{dept_name}' 관련 주제가 없습니다.")
+        else:
+            if df_inq.empty: st.warning("탐구 주제 파일이 비어있습니다.")
+            else: 
+                # 어떤 제목을 찾지 못했는지 알려줌
+                missing = []
+                if not inq_dept_col: missing.append("'학과'")
+                if not inq_topic_col: missing.append("'주제'")
+                st.warning(f"⚠️ 엑셀 파일에서 제목을 찾지 못했습니다: {', '.join(missing)}")
+                st.write("인식된 제목들:", df_inq.columns.tolist())
         
         st.markdown("<br><hr><br>", unsafe_allow_html=True)
+else:
+    st.error("학과 데이터 파일(학과카드_DB.xlsx)을 찾을 수 없습니다.")
